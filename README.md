@@ -13,8 +13,6 @@ Throughout the course, I designed, built, and programmed embedded systems that i
   - LED control and pulse width modulation (PWM) for dimming and timing.  
   - DC motor speed control using H-bridge drivers and optocouplers.  
   - Wireless serial communication through UART and RS232 interfaces.  
-  - Camera module integration for real-time image acquisition and processing.  
-  - Autonomous vehicle control and sensor-based navigation.  
 
 - **Source Code and Schematics**  
   - C source files for embedded applications.  
@@ -34,9 +32,6 @@ This project involved the design and implementation of a **microprocessor-based 
 - **LED Dimming via PWM:** Controlled LED brightness using hardware timers and PWM registers.  
 - **DC Motor Control:** Implemented speed and direction control using H-bridge motor drivers and optocouplers.  
 - **Wireless Communication:** Used UART/RS232 with a wireless modem to send and receive ASCII commands remotely.  
-- **Camera Integration:** Captured image data using a USB or RS232 camera and stored it via SPI/I2C-connected flash memory.  
-- **Autonomous Navigation:** Combined camera input and sensor data to guide a small robotic vehicle for line tracking and obstacle avoidance.  
-- **IoT Applications:** Integrated accelerometers, gyroscopes, and wireless control interfaces for path tracking and sensor fusion.  
 
 ---
 
