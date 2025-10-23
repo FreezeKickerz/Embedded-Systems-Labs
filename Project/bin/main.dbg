@@ -1,0 +1,35 @@
+            ORG     $FFFE
+            FDB     $F000
+            ORG     $FFF6
+            FDB     $F100
+            ORG     $FFF0
+            FDB     $F200
+
+            ORG     $F000
+MAIN:       LDS     #$0C00
+            LDD     #$FF00
+            TAP
+            LDX     #$F0F0
+            LDY     #$ABCD
+            CLI
+            JSR     SUB1
+            SWI
+
+SUB1:       NOP
+LOOP1:      NOP
+            BRA     LOOP1
+            RTS
+
+            ORG     $F200
+ISRTI:      SWI
+            NOP
+            ***
+            ***
+RTIEND:     RTI
+
+            ORG     $F100
+ISRSWI:     NOP
+            ***
+            ***
+SWIEND:     RTI
+

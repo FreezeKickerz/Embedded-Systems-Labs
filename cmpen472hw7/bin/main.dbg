@@ -1,0 +1,802 @@
+***********************************************************************
+*
+* Title:          Calculator
+*
+* Objective:      CMPEN 472 Homework 7
+*
+* Revision:       V1.0  for CodeWarrior 5.2
+*
+* Date:	          18 October 2024
+*
+* Programmer:     Tyler Korz
+*
+* Company:        Student at The Pennsylvania State University
+*                 Department of Computer Science and Engineering
+*
+* Program:        Simple SCI Serial Port I/O and Demonstration
+*                 Calculator
+*                                  
+*
+* Algorithm:      Simple Serial I/O use, ASCII and hex conversions
+*                 overflow check, negative check
+*
+* Register use:	  Accumulator A: Serial port data
+*                 Accumulator B: Misc uses
+*                 Register X:    Buffer
+*                 Register Y:    Buffer
+*
+* Memory use:     RAM Locations from $3000 for data, 
+*                 RAM Locations from $3100 for program
+*
+*	Input:          Terminal connected over serial port
+*
+* Output:         
+*                 Terminal connected over serial port
+*
+*
+* Observation:    Receives input from terminal window. Can perform
+*                 simple arithmetic operations (+,-,*,/).
+*                 Gives error on negative numbers, overflow, improper
+*                 format. Only can operate on 4 digit numbers or less
+*
+***********************************************************************
+* Parameter Declearation Section
+*
+* Export Symbols
+            XDEF        pstart       ; export 'pstart' symbol
+            ABSENTRY    pstart       ; for assembly entry point
+  
+* Symbols and Macros
+PORTB       EQU         $0001        ; i/o port B addresses
+DDRB        EQU         $0003
+
+SCIBDH      EQU         $00C8        ; Serial port (SCI) Baud Register H
+SCIBDL      EQU         $00C9        ; Serial port (SCI) Baud Register L
+SCICR2      EQU         $00CB        ; Serial port (SCI) Control Register 2
+SCISR1      EQU         $00CC        ; Serial port (SCI) Status Register 1
+SCIDRL      EQU         $00CF        ; Serial port (SCI) Data Register
+
+CR          EQU         $000D        ; carriage return, ASCII 'Return' key
+LF          EQU         $000A        ; line feed, ASCII 'next line' character
+SPACE       EQU         $0020        ; space character
+
+***********************************************************************
+* Data Section: address used [ $3000 to $30FF ] RAM memory
+*
+            ORG         $3000        ; Reserved RAM memory starting address 
+                                     ;   for Data for CMPEN 472 class
+
+CCount      DS.B        $0001        ; Stores the total number of characters read from input
+HCount      DS.B        $0001        ; Counts the number of ASCII characters processed for hexadecimal conversion
+DCount      DS.B        $0001        ; Counts the number of ASCII characters processed for decimal conversion
+DCount1     DS.B        $0001        ; Number of digits in the first input number (Num1)
+DCount2     DS.B        $0001        ; Number of digits in the second input number (Num2)
+Hex         DS.B        $0002        ; Temporary storage for a number during hexadecimal conversion
+
+tempbuff1   DS.B        $0002        ; Temporary buffer used during number conversions
+tempbuff2   DS.B        $0002        ; Another temporary buffer used during conversions
+
+CmdBuff     DS.B        $000A        ; Buffer to store the user's command input (10 bytes)
+DecBuff     DS.B        $0004        ; Buffer used during decimal number conversions (4 bytes)
+
+Num1        DS.B        $0002        ; Stores the first inputted number in binary format (2 bytes)
+Num2        DS.B        $0002        ; Stores the second inputted number in binary format (2 bytes)
+Num1ASCII   DS.B        $0004        ; ASCII representation of Num1 for display or processing (4 bytes)
+Num2ASCII   DS.B        $0004        ; ASCII representation of Num2 for display or processing (4 bytes)
+        
+Opcode      DS.B        $0001        ; Stores the operation code (e.g., '+', '-', '*', '/')
+err         DS.B        $0001        ; Error flag (set to non-zero if an error occurs)
+negFlag     DS.B        $0001        ; Negative result flag (set if the result is negative)
+
+
+*
+***********************************************************************
+* Program Section: address used [ $3100 to $3FFF ] RAM memory
+*
+            ORG   $3100              ; Program start address, in RAM
+pstart      LDS   #$3100             ; initialize the stack pointer
+
+            LDAA  #%11111111         ; Set PORTB bit 0,1,2,3,4,5,6,7
+            STAA  DDRB         
+
+            LDAA  #%00000000
+            STAA  PORTB              ; clear all bits of PORTB
+
+            ldaa  #$0C               
+            staa  SCICR2             
+
+            ldd   #$0001             
+            std   SCIBDH             
+            
+main        
+            ldx   #prompt            ; Load address of prompt message into X
+            jsr   printmsg           ; Call subroutine to print the prompt
+            
+            ldx   #CmdBuff           ; Load address of command buffer into X
+            clr   CCount             ; Clear character count variable
+            clr   HCount             ; Clear hexadecimal character count variable
+            jsr   clrBuff            ; Call subroutine to clear the command buffer
+            ldx   #CmdBuff           ; Re-initialize X to point to the command buffer
+
+cmdLoop     jsr   getchar            ; Get a character from input
+            cmpa  #$00               ; Check if input is null (no data)
+            beq   cmdLoop            ; If null, loop back to wait for input
+                                         
+            cmpa  #CR                ; Check if input is Carriage Return (CR)
+            beq   Enter              ; If CR, proceed to process input
+            jsr   putchar            ; Echo the character back to the output
+            
+Enter       staa  1,X+               ; Store character in buffer and increment X
+            inc   CCount             ; Increment character count
+            ldab  CCount             ; Load character count into B
+            cmpb  #$0A               ; Compare count with buffer size limit (10)
+            lbhi  Error              ; If exceeded, branch to Error
+            cmpa  #CR                ; Check again if character is CR
+            bne   cmdLoop            ; If not, continue to read input characters
+                
+            ldab  CCount             ; Load final character count into B
+            cmpb  #$04               ; Check if minimum input length (4) is met
+            lblo  Error              ; If not, branch to Error
+                
+OpCheck                
+            ldaa  #CR                ; Load Carriage Return into A
+            jsr   putchar            ; Output CR to the terminal                                
+            ldaa  #LF                ; Load Line Feed into A
+            jsr   putchar            ; Output LF to the terminal
+                
+            jsr   parse              ; Call subroutine to parse the input command
+            ldaa  err                ; Load error flag to check for parsing errors
+            cmpa  #$01               ; Compare error flag with 1
+            lbeq  Error              ; If error occurred, branch to Error
+                
+            ldx   #Hex               ; Load address of Hex variable into X
+            clr   0,X                ; Clear the first byte of Hex
+            clr   1,X                ; Clear the second byte of Hex
+                
+            ldy   #Num1              ; Load address of Num1 into Y (destination for conversion)
+            ldx   #Num1ASCII         ; Load address of Num1ASCII into X (source for conversion)
+            ldaa  DCount1            ; Load number of digits in Num1ASCII
+            staa  DCount             ; Store digit count for conversion
+            jsr   AsciiDecToHex      ; Convert ASCII decimal in Num1ASCII to binary in Num1
+            ldaa  err                ; Load error flag after conversion
+            cmpa  #$01               ; Check for conversion errors
+            lbeq  Error              ; If error, branch to Error
+            sty   Num1               ; Store converted binary number into Num1
+                
+            ldx   #Hex               ; Reinitialize X to address of Hex variable
+            clr   0,X                ; Clear the first byte of Hex
+            clr   1,X                ; Clear the second byte of Hex
+                
+            ldy   #Num2              ; Load address of Num2 into Y (destination for conversion)
+            ldx   #Num2ASCII         ; Load address of Num2ASCII into X (source for conversion)
+            ldaa  DCount2            ; Load number of digits in Num2ASCII
+            staa  DCount             ; Store digit count for conversion
+            jsr   AsciiDecToHex      ; Convert ASCII decimal in Num2ASCII to binary in Num2
+            ldaa  err                ; Load error flag after conversion
+            cmpa  #$01               ; Check for conversion errors
+            lbeq  Error              ; If error, branch to Error
+            sty   Num2               ; Store converted binary number into Num2
+                
+            ldaa  Opcode             ; Load the operation code from Opcode variable
+            cmpa  #$00               ; Check if operation is addition
+            beq   AddOp              ; If yes, branch to AddOp
+            cmpa  #$01               ; Check if operation is subtraction
+            beq   SubOp              ; If yes, branch to SubOp
+            cmpa  #$02               ; Check if operation is multiplication
+            beq   MulOp              ; If yes, branch to MulOp
+            cmpa  #$03               ; Check if operation is division
+            beq   DivOp              ; If yes, branch to DivOp
+            bra   Error              ; If none match, branch to Error (invalid opcode)
+                
+AddOp       ldd   Num1               ; Load Num1 into D register
+            addd  Num2               ; Add Num2 to D register
+            std   Hex                ; Store the result in Hex variable
+            bra   PrintAnswer        ; Proceed to print the answer
+
+SubOp       ldd   Num1               ; Load Num1 into D register
+            cpd   Num2               ; Compare D (Num1) with Num2
+            blt   Negate             ; If Num1 < Num2, result will be negative
+            subd  Num2               ; Subtract Num2 from D
+            std   Hex                ; Store the result in Hex variable
+            bra   PrintAnswer        ; Proceed to print the answer
+                
+Negate      ldd   Num2               ; Load Num2 into D register
+            subd  Num1               ; Subtract Num1 from D (Num2 - Num1)
+            std   Hex                ; Store the positive difference in Hex
+            ldaa  #$01               ; Load 1 into A to set negative flag
+            staa  negFlag            ; Set negative flag indicating negative result
+            bra   PrintAnswer        ; Proceed to print the answer
+
+MulOp       ldd   Num1               ; Load Num1 into D register
+            ldy   Num2               ; Load Num2 into Y register
+            emul                     ; Multiply D and Y (16-bit multiplication)
+            bcs   OFError            ; If carry set, multiplication overflowed
+            cpy   #$00               ; Check if upper 16 bits (Y) are zero
+            bne   OFError            ; If not zero, overflow occurred
+            std   Hex                ; Store lower 16 bits of result in Hex
+            bra   PrintAnswer        ; Proceed to print the answer
+
+DivOp       ldd   Num1               ; Load dividend (Num1) into D register
+            ldx   Num2               ; Load divisor (Num2) into X register
+            cpx   #$0000             ; Check for division by zero
+            beq   Error              ; If divisor is zero, branch to Error
+            idiv                     ; Perform integer division D / X
+            stx   Hex                ; Store the quotient in Hex
+                                    
+PrintAnswer                          ; Subroutine to print the calculation result
+            ldx   #equal             ; Load address of equal sign ('=') message into X
+            jsr   printmsg           ; Print the equal sign
+            
+            ldd   Hex                ; Load the result into D register
+            jsr   hexToAsciiDecimal  ; Convert hexadecimal value in D to ASCII decimal in DecBuff
+            ldaa  negFlag            ; Load the negative flag
+            cmpa  #$01               ; Check if result is negative
+            bne   PrintResult        ; If not negative, skip printing minus sign
+            ldx   #minus             ; Load address of minus sign ('-') into X
+            jsr   printmsg           ; Print the minus sign
+
+PrintResult        
+            ldx   #DecBuff           ; Load address of decimal buffer containing the result
+            jsr   printmsg           ; Print the result
+            ldaa  #CR                ; Load Carriage Return into A
+            jsr   putchar            ; Output CR to the terminal
+            ldaa  #LF                ; Load Line Feed into A
+            jsr   putchar            ; Output LF to the terminal
+            clr   negFlag            ; Clear the negative flag for next operation
+            lbra  main               ; Loop back to main to start over
+
+Error                                ; Error handling for invalid inputs or operations
+            ldaa  #CR                ; Load Carriage Return into A
+            jsr   putchar            ; Output CR to the terminal
+            ldaa  #LF                ; Load Line Feed into A
+            jsr   putchar            ; Output LF to the terminal
+                            
+            ldx   #errmsg1           ; Load address of error message into X
+            jsr   printmsg           ; Print the error message
+            ldaa  #CR                ; Load Carriage Return into A
+            jsr   putchar            ; Output CR to the terminal
+            ldaa  #LF                ; Load Line Feed into A
+            jsr   putchar            ; Output LF to the terminal
+            clr   err                ; Reset error flag
+            lbra  main               ; Loop back to main to start over
+
+OFError                              ; Error handling for arithmetic overflow
+            ldaa  #CR                ; Load Carriage Return into A
+            jsr   putchar            ; Output CR to the terminal
+            ldaa  #LF                ; Load Line Feed into A
+            jsr   putchar            ; Output LF to the terminal
+                           
+            ldx   #errmsg2           ; Load address of overflow error message into X
+            jsr   printmsg           ; Print the overflow error message
+            ldaa  #CR                ; Load Carriage Return into A
+            jsr   putchar            ; Output CR to the terminal
+            ldaa  #LF                ; Load Line Feed into A
+            jsr   putchar            ; Output LF to the terminal
+            clr   err                ; Reset error flag
+            lbra  main               ; Loop back to main to start over        
+                                   
+;*************************************************************************
+;*       SUBROUTINE SECTION BEGINS                                       *
+;*************************************************************************
+
+;***********printmsg***************************
+;* Program: Output character string to SCI port, print message
+;* Input:   Register X points to ASCII characters in memory
+;* Output:  message printed on the terminal connected to SCI port
+;* 
+;* Registers modified: CCR
+;* Algorithm:
+;     Pick up 1 byte from memory where X register is pointing
+;     Send it out to SCI port
+;     Update X register to point to the next byte
+;     Repeat until the byte data $00 is encountered
+;       (String is terminated with NULL=$00)
+;**********************************************
+NULL           equ     $00
+printmsg       psha                      ; Save the current value of accumulator A onto the stack
+               pshx                      ; Save the current value of index register X onto the stack
+
+printmsgloop   ldaa    1,X+              ; Load the next character from the string into A
+                                         ; Addressing Mode '1,X+':
+                                         ;   - Access memory at address X + 1
+                                         ;   - Post-increment X by 1 after loading
+                                         ; This effectively reads the character and moves X to point to the next character
+
+               cmpa    #NULL             ; Compare the loaded character with NULL (zero terminator)
+               beq     printmsgdone      ; If character is NULL, end of string is reached; branch to printmsgdone
+
+               jsr     putchar           ; Call subroutine to output the character in A to the terminal
+
+               bra     printmsgloop      ; Unconditionally branch back to process the next character
+
+printmsgdone   pulx                      ; Restore the original value of index register X from the stack
+               pula                      ; Restore the original value of accumulator A from the stack
+               rts                       ; Return from the subroutine
+;***********end of printmsg********************
+
+
+;***************putchar************************
+; Subroutine: putchar
+; Purpose:    Transmits a character stored in accumulator A over the serial communication interface (SCI).
+; Registers Used:
+;    - A: Accumulator A (contains the character to transmit)
+
+putchar        brclr SCISR1,#%10000000,putchar   ; Wait until the SCI transmit data register is empty
+                                                 ; SCISR1: SCI Status Register 1
+                                                 ; Bit 7 (TDRE - Transmit Data Register Empty flag)
+                                                 ; brclr: Branch if bit is clear
+                                                 ; Loops until TDRE bit is set, indicating the transmit buffer is ready
+
+               staa  SCIDRL                      ; Store the character from accumulator A into SCI Data Register Low
+                                                 ; This initiates the transmission of the character
+
+               rts                               ; Return from subroutine
+
+;***************end of putchar*****************
+
+
+;***************echoPrint**********************
+; Subroutine: echoPrint
+; Purpose:    Echoes a character stored in accumulator A to the output, unless it's a Carriage Return (CR).
+; Registers Used:
+;    - A: Accumulator A (contains the character to check and potentially echo)
+
+echoPrint      cmpa       #CR       ; Compare the character in A with Carriage Return (CR)
+               beq        retEcho   ; If character is CR, branch to retEcho to return without echoing
+               
+               jsr        putchar   ; If not CR, call putchar to output the character in A
+               
+retEcho        rts                   ; Return from subroutine
+
+;***************end of echoPrint***************
+
+
+;****************getchar***********************
+; Subroutine: getchar
+; Purpose:    Reads a character from the serial communication interface (SCI).
+;             If a character is available, it loads it into accumulator A.
+;             If no character is available, it clears accumulator A.
+; Registers Used:
+;    - A: Accumulator A (receives the character or is cleared)
+
+getchar        brclr SCISR1,#%00100000,getchar7    ; Check if a character has been received
+                                                   ; SCISR1: SCI Status Register 1
+                                                   ; Bit 5 (RDRF - Receive Data Register Full flag)
+                                                   ; brclr: Branch if bit is clear
+                                                   ; If RDRF bit is not set, branch to getchar7
+
+               ldaa  SCIDRL                        ; Load the received character from SCI Data Register Low into A
+                                                   ; Character is now available in accumulator A
+
+               rts                                 ; Return from subroutine with character in A
+
+getchar7       clra                                ; Clear accumulator A (no character received)
+                                                   ; A is set to zero to indicate no data
+
+               rts                                 ; Return from subroutine
+;****************end of getchar**************** 
+
+
+
+ ;***********clrBuff****************************
+; Subroutine: clrBuff
+; Purpose:    Clears 10 bytes of memory starting from the address pointed to by register X.
+; Registers Used:
+;    - A: Accumulator A (used to store zero into memory)
+;    - B: Accumulator B (used as a loop counter)
+;    - X: Index register X (points to the memory buffer to be cleared)
+
+clrBuff
+                ldab    #$0A          ; Load B with the number of bytes to clear (10 bytes)
+clrLoop
+                cmpb    #$00          ; Check if B (loop counter) has reached zero
+                beq     clrReturn     ; If B is zero, all bytes have been cleared; exit loop
+
+                ldaa    #$00          ; Load zero into accumulator A
+                staa    1,X+          ; Store zero into memory at address X+1 and increment X
+                                       ; '1,X+' uses indexed addressing with post-increment
+                decb                  ; Decrement B to move to the next byte
+                bra     clrLoop       ; Unconditionally branch back to clrLoop to clear next byte
+
+clrReturn       rts                   ; Return from subroutine
+;****************end of clrBuff*****************************
+
+
+;********************parse****************************
+; Subroutine: parse
+; Purpose:    Parses the command buffer input to extract two numbers (Num1 and Num2) and the operation code (Opcode).
+;             It validates the input and handles any parsing errors.
+; Registers Used:
+;    - A: Accumulator A (used for character processing)
+;    - B: Accumulator B (used as a digit counter)
+;    - X: Index register X (points to the command buffer)
+;    - Y: Index register Y (points to Num1ASCII or Num2ASCII buffers)
+
+parse       ldx     #indent            ; Load address of indentation string into X
+            jsr     printmsg           ; Print indentation (probably for formatting the output)
+            ldx     #CmdBuff           ; Load address of command buffer into X (source of input data)
+            ldy     #Num1ASCII         ; Load address of Num1ASCII into Y (destination buffer for first number)
+            clrb                        ; Clear B register (digit counter)
+                            
+Num1Loop    ldaa    1,X+               ; Load next character from command buffer into A, post-increment X
+            jsr     echoPrint          ; Echo the character back to the terminal (unless it's a CR)
+                
+            cmpa    #$39               ; Compare A with ASCII '9' (0x39)
+            bhi     parseErr           ; If A > '9', invalid character, branch to parseErr
+                
+            cmpa    #$30               ; Compare A with ASCII '0' (0x30)
+            blo     OpChk              ; If A < '0', it's not a digit, check if it's an operator
+                                        ; Else, it's a digit between '0' and '9'
+                
+            cmpb    #$04               ; Compare digit count B with 4
+            bhi     parseErr           ; If more than 4 digits, invalid input, branch to parseErr
+                
+            staa    1,Y+               ; Store the digit character in Num1ASCII buffer, post-increment Y
+            incb                       ; Increment digit counter B
+            bra     Num1Loop           ; Loop back to process next character
+
+OpChk       cmpb    #$04               ; Check if digit count B exceeds 4 (max digits for Num1)
+            bhi     parseErr           ; If more than 4 digits, invalid input, branch to parseErr
+            tstb                       ; Test B (digit count) for zero
+            beq     parseErr           ; If no digits were read, invalid input, branch to parseErr
+                
+            stab    DCount1            ; Store the number of digits read for Num1
+            clrb                       ; Clear B register (prepare for next use)
+            stab    0,Y                ; Store zero terminator at end of Num1ASCII buffer (null-terminate string)
+                
+AddChk      cmpa    #$2B               ; Compare A with ASCII '+' (0x2B)
+            bne     SubChk             ; If not '+', check for other operators
+            ldaa    #$00               ; Load operation code for addition (0)
+            staa    Opcode             ; Store operation code
+            bra     Numb2              ; Proceed to parse second number
+                
+SubChk      cmpa    #$2D               ; Compare A with ASCII '-' (0x2D)
+            bne     MulChk             ; If not '-', check for other operators
+            ldaa    #$01               ; Load operation code for subtraction (1)
+            staa    Opcode             ; Store operation code
+            bra     Numb2              ; Proceed to parse second number
+                
+MulChk      cmpa    #$2A               ; Compare A with ASCII '*' (0x2A)
+            bne     DivChk             ; If not '*', check for division
+            ldaa    #$02               ; Load operation code for multiplication (2)
+            staa    Opcode             ; Store operation code
+            bra     Numb2              ; Proceed to parse second number
+                
+DivChk      cmpa    #$2F               ; Compare A with ASCII '/' (0x2F)
+            bne     parseErr           ; If not '/', invalid operator, branch to parseErr
+            ldaa    #$03               ; Load operation code for division (3)
+            staa    Opcode             ; Store operation code
+                                                         
+Numb2       ldy     #Num2ASCII         ; Load address of Num2ASCII into Y (destination buffer for second number)
+
+Num2Loop    ldaa    1,X+               ; Load next character from command buffer into A, post-increment X
+            jsr     echoPrint          ; Echo the character back to the terminal
+            
+            cmpa    #CR                ; Compare A with Carriage Return (CR)
+            beq     Return             ; If CR, end of input, proceed to Return
+            
+            cmpa    #$39               ; Compare A with ASCII '9' (0x39)
+            bhi     parseErr           ; If A > '9', invalid character, branch to parseErr
+            cmpa    #$30               ; Compare A with ASCII '0' (0x30)
+            blo     parseErr           ; If A < '0', invalid character, branch to parseErr
+            
+            cmpb    #$04               ; Compare digit count B with 4
+            bhi     parseErr           ; If more than 4 digits, invalid input, branch to parseErr
+            
+            staa    1,Y+               ; Store the digit character in Num2ASCII buffer, post-increment Y
+            incb                       ; Increment digit counter B
+            bra     Num2Loop           ; Loop back to process next character
+            
+Return      cmpb    #$04               ; Check if digit count B exceeds 4 (max digits for Num2)
+            bhi     parseErr           ; If more than 4 digits, invalid input, branch to parseErr
+            tstb                       ; Test B (digit count) for zero
+            beq     parseErr           ; If no digits were read, invalid input, branch to parseErr
+            
+            stab    DCount2            ; Store the number of digits read for Num2
+            clrb                       ; Clear B register
+            stab    0,Y                ; Store zero terminator at end of Num2ASCII buffer (null-terminate string)
+
+            rts                         ; Return from subroutine (parsing successful)
+                
+parseErr    ldaa    #$01               ; Load error code 1 into A
+            staa    err                ; Set error flag to indicate parsing error
+            rts                         ; Return from subroutine
+;***************end of parse*****************************
+
+
+;*********************AsciiDecToHex*****************************
+; Subroutine: AsciiDecToHex
+; Purpose:    Converts an ASCII decimal number (up to 4 digits) into its binary (hexadecimal) equivalent.
+;             The result is stored in the 'Hex' variable.
+; Inputs:
+;    - X register points to the ASCII digits buffer (e.g., '1', '2', '3', '4')
+;    - DCount variable contains the number of digits to process (1 to 4)
+; Outputs:
+;    - Hex variable contains the binary equivalent of the ASCII decimal number
+;    - err flag is set to 1 if an error occurs (e.g., invalid digit count)
+; Registers Used:
+;    - A, B: Accumulators for arithmetic operations
+;    - D: Double accumulator (combines A and B)
+;    - X: Index register pointing to input buffer
+;    - Y: Index register used for output
+
+AsciiDecToHex    
+
+; Begin processing digits, starting with the possibility of 4 digits
+Digit4          ldaa    0,X          ; Load the first ASCII digit from buffer into A
+                ldab    DCount       ; Load the number of digits into B
+                cmpb    #$04         ; Check if there are 4 digits
+                bne     Digit3       ; If less than 4 digits, branch to Digit3
+                dec     DCount       ; Decrement digit count (now 3 digits left)
+                                 
+                suba    #$30         ; Convert ASCII character to binary digit (subtract ASCII '0')
+                
+                ; Multiply the first digit by 1000 using shifts and additions
+                ; Compute digit * 24
+                lsla                 ; Multiply A by 2 (A = A * 2)
+                lsla                 ; Multiply A by 2 (A = A * 4)
+                lsla                 ; Multiply A by 2 (A = A * 8)
+                staa    tempbuff1    ; Store intermediate result (digit * 8) in tempbuff1
+                
+                ldaa    0,X          ; Reload the first ASCII digit into A
+                suba    #$30         ; Convert ASCII character to binary digit
+                lsla                 ; Multiply A by 2 (A = A * 2)
+                lsla                 ; Multiply A by 2 (A = A * 4)
+                lsla                 ; Multiply A by 2 (A = A * 8)
+                lsla                 ; Multiply A by 2 (A = A * 16)
+                adda    tempbuff1    ; Add previous result (A = digit * 16 + digit * 8)
+                staa    tempbuff1    ; Now tempbuff1 contains digit * 24
+                                 
+                ; Compute digit * 1024
+                ldd     0,X          ; Load the first ASCII digit into D (upper byte will be zero)
+                subd    #$30         ; Convert ASCII character to binary digit
+                ; Shift D left by 10 to multiply by 1024
+                lsld                 ; Multiply D by 2 (D = D * 2)
+                lsld                 ; Multiply D by 2 (D = D * 4)
+                lsld                 ; Multiply D by 2 (D = D * 8)
+                lsld                 ; Multiply D by 2 (D = D * 16)
+                lsld                 ; Multiply D by 2 (D = D * 32)
+                lsld                 ; Multiply D by 2 (D = D * 64)
+                lsld                 ; Multiply D by 2 (D = D * 128)
+                lsld                 ; Multiply D by 2 (D = D * 256)
+                lsld                 ; Multiply D by 2 (D = D * 512)
+                lsld                 ; Multiply D by 2 (D = D * 1024)
+                std     tempbuff2    ; Store result (digit * 1024) in tempbuff2
+                
+                ; Calculate digit * 1000 = (digit * 1024) - (digit * 24)
+                ldd     tempbuff2    ; Load digit * 1024 into D
+                subd    tempbuff1    ; Subtract digit * 24 from D (D = digit * 1000)
+                std     Hex          ; Store the result in Hex variable
+                
+                ldd     #$0          ; Clear D register for next operations
+                                                    
+                inx                  ; Increment X to point to the next digit
+                ldaa    0,X          ; Load the next ASCII digit into A
+                ldab    DCount       ; Load updated digit count (now 3)
+    
+; Process the case where there are 3 digits left
+Digit3          cmpb    #$03         ; Check if there are 3 digits
+                bne     Digit2       ; If not, branch to Digit2
+                dec     DCount       ; Decrement digit count (now 2 digits left)
+                suba    #$30         ; Convert ASCII character to binary digit
+                ldab    #100         ; Load multiplier 100 into B
+                mul                  ; Multiply A * B (digit * 100), result in D
+                addd    Hex          ; Add to cumulative result in Hex
+                std     Hex          ; Store updated result in Hex                
+                inx                  ; Increment X to point to the next digit
+                ldaa    0,X          ; Load the next ASCII digit into A
+                ldab    DCount       ; Load updated digit count (now 2)
+    
+; Process the case where there are 2 digits left
+Digit2          cmpb    #$02         ; Check if there are 2 digits
+                bne     Digit1       ; If not, branch to Digit1
+                dec     DCount       ; Decrement digit count (now 1 digit left)
+                suba    #$30         ; Convert ASCII character to binary digit
+                ldab    #10          ; Load multiplier 10 into B
+                mul                  ; Multiply A * B (digit * 10), result in D
+                addd    Hex          ; Add to cumulative result in Hex
+                std     Hex          ; Store updated result in Hex                     
+                inx                  ; Increment X to point to the next digit
+                ldaa    0,X          ; Load the next ASCII digit into A
+                ldab    DCount       ; Load updated digit count (now 1)
+                
+; Process the last digit
+Digit1          cmpb    #$01         ; Check if there is 1 digit left
+                bne     DigitCountError ; If not, too many digits; branch to error handler
+                dec     DCount       ; Decrement digit count (now 0)
+                suba    #$30         ; Convert ASCII character to binary digit
+                ldab    #1           ; Multiplier is 1 for the last digit
+                mul                  ; Multiply A * B (digit * 1), result in D
+                addd    Hex          ; Add to cumulative result in Hex
+                std     Hex          ; Store final result in Hex                     
+                inx                  ; Increment X (buffer pointer beyond last digit)                
+                ldy     Hex          ; Load final binary result into Y register
+               
+                rts                  ; Return from subroutine
+
+; Error handler for invalid digit count
+DigitCountError ldaa    #$01         ; Load error code 1 into A
+                staa    err          ; Set error flag to indicate an error occurred
+                rts                  ; Return from subroutine
+;*********************end of AsciiDecToHex********************* 
+
+
+;*********************hexToAsciiDecimal****************************
+; Subroutine: hexToAsciiDecimal
+; Purpose:    Converts a hexadecimal number in register D to its ASCII decimal representation.
+;             The result is stored in the 'DecBuff' buffer.
+; Inputs:
+;    - D: The hexadecimal number to convert.
+; Outputs:
+;    - DecBuff: Buffer containing the ASCII decimal representation of the number.
+;    - HCount: The number of digits in the result.
+; Registers Used:
+;    - A, B: Accumulators for arithmetic and data manipulation.
+;    - X, Y: Index registers for memory addressing.
+
+hexToAsciiDecimal            clr   HCount          ; Clear the digit count before starting.
+                cpd   #$00            ; Compare D with zero to check if the number is zero.
+                lbeq  Rev1            ; If D equals zero, branch to handle zero case.
+                ldy   #DecBuff        ; Load Y with the address of DecBuff.
+
+HLoop           ldx   #10             ; Load X with the divisor 10 for decimal conversion.
+                idiv                  ; Divide D by X, quotient in X, remainder in B.
+                                      
+                stab  1,Y+            ; Store the remainder in DecBuff, increment Y.
+                inc   HCount          ; Increment the digit count.
+                tfr   X,D             ; Transfer the quotient from X back to D for the next division.
+                tstb                  ; Test if the remainder B is zero.
+                bne   HLoop           ; If remainder is not zero, continue the loop.
+
+reverse         ldaa  HCount          ; Load the total number of digits into A.
+                cmpa  #$05            ; Check if there are 5 digits.
+                beq   Rev5            ; If 5 digits, branch to handle the 5-digit case.
+                cmpa  #$04            ; Check if there are 4 digits.
+                beq   Rev4            ; If 4 digits, branch to handle the 4-digit case.
+                cmpa  #$03            ; Check if there are 3 digits.
+                lbeq  Rev3            ; If 3 digits, branch to handle the 3-digit case.
+                cmpa  #$02            ; Check if there are 2 digits.
+                lbeq  Rev2            ; If 2 digits, branch to handle the 2-digit case.
+                                      ; If only 1 digit, proceed to convert and return.
+                ldx   #DecBuff        ; Load X with the address of DecBuff.
+                ldaa  0,X             ; Load the single digit from DecBuff.
+                adda  #$30            ; Convert the digit to ASCII by adding '0'.
+                staa  1,X+            ; Store the ASCII character in DecBuff.
+                ldaa  #$00            ; Load the NULL terminator.
+                staa  1,X+            ; Store the NULL terminator in DecBuff.
+                rts                   ; Return from subroutine.
+
+Rev5            ldx   #DecBuff        ; Load X with the address of DecBuff.
+                ldaa  1,X+            ; Load the units place digit, post-increment X.
+                inx                   ; Skip unused byte.
+                inx                   ; Skip unused byte.
+                inx                   ; Skip unused byte.
+                ldab  0,X             ; Load the ten-thousands place digit.
+                staa  0,X             ; Move units place digit to the ten-thousands place.
+                ldx   #DecBuff        ; Reset X to start of DecBuff.
+                stab  0,X             ; Move ten-thousands place digit to the start.
+
+                inx                   ; Move to thousands place.
+                ldaa  1,X+            ; Load thousands place digit, post-increment X.
+                inx                   ; Skip unused byte.
+                ldab  0,X             ; Load tens place digit.
+                staa  0,X             ; Move thousands place digit to tens place.
+                ldx   #DecBuff        ; Reset X to start of DecBuff.
+                inx                   ; Move to thousands place.
+                stab  0,X             ; Move tens place digit to thousands place.
+
+                ldx   #DecBuff        ; Reset X to start of DecBuff.
+                ldaa  0,X             ; Load ten-thousands place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load thousands place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load hundreds place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load tens place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load units place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  #$00            ; Load NULL terminator.
+                staa  1,X+            ; Store NULL terminator.
+                rts                   ; Return from subroutine.
+
+Rev4            ldx   #DecBuff        ; Load X with the address of DecBuff.
+                ldaa  1,X+            ; Load units place digit, post-increment X.
+                inx                   ; Skip unused byte.
+                inx                   ; Skip unused byte.
+                ldab  0,X             ; Load thousands place digit.
+                staa  0,X             ; Move units place digit to thousands place.
+                ldx   #DecBuff        ; Reset X to start of DecBuff.
+                stab  0,X             ; Move thousands place digit to start.
+
+                inx                   ; Move to hundreds place.
+                ldaa  1,X+            ; Load hundreds place digit, post-increment X.
+                ldab  0,X             ; Load tens place digit.
+                staa  0,X             ; Move hundreds place digit to tens place.
+                ldx   #DecBuff        ; Reset X to start of DecBuff.
+                inx                   ; Move to hundreds place.
+                stab  0,X             ; Move tens place digit to hundreds place.
+
+                ldx   #DecBuff        ; Reset X to start of DecBuff.
+                ldaa  0,X             ; Load thousands place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load hundreds place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load tens place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load units place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  #$00            ; Load NULL terminator.
+                staa  1,X+            ; Store NULL terminator.
+                rts                   ; Return from subroutine.
+
+Rev3            ldx   #DecBuff        ; Load X with the address of DecBuff.
+                ldaa  1,X+            ; Load units place digit, post-increment X.
+                inx                   ; Skip unused byte.
+                ldab  0,X             ; Load hundreds place digit.
+                staa  0,X             ; Move units place digit to hundreds place.
+                ldx   #DecBuff        ; Reset X to start of DecBuff.
+                stab  0,X             ; Move hundreds place digit to start.
+
+                ldaa  0,X             ; Load hundreds place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load tens place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load units place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  #$00            ; Load NULL terminator.
+                staa  1,X+            ; Store NULL terminator.
+                rts                   ; Return from subroutine.
+
+Rev2            ldx   #DecBuff        ; Load X with the address of DecBuff.
+                ldaa  1,X+            ; Load units place digit.
+                ldab  0,X             ; Load tens place digit.
+                staa  0,X             ; Move units place digit to tens place.
+                ldx   #DecBuff        ; Reset X to start of DecBuff.
+                stab  0,X             ; Move tens place digit to start.
+
+                ldaa  0,X             ; Load tens place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  0,X             ; Load units place digit.
+                adda  #$30            ; Convert to ASCII.
+                staa  1,X+            ; Store in DecBuff.
+                ldaa  #$00            ; Load NULL terminator.
+                staa  1,X+            ; Store NULL terminator.
+                rts                   ; Return from subroutine.
+
+Rev1            ldx   #DecBuff        ; Load X with the address of DecBuff.
+                ldaa  #$30            ; Load ASCII '0' to represent zero.
+                staa  1,X+            ; Store '0' in DecBuff.
+                ldaa  #$00            ; Load NULL terminator.
+                staa  1,X+            ; Store NULL terminator.
+                rts                   ; Return from subroutine.
+
+;******************end of hexToAsciiDecimal************************
+
+
+;OPTIONAL
+;more variable/data section below
+
+prompt         DC.B    'Ecalc>  ', $00
+indent         DC.B    '        ', $00
+equal          DC.B    '=', $00
+minus          DC.B    '-', $00
+
+errmsg1        DC.B    '        Invalid input format', $00
+errmsg2        DC.B    '        Overflow error', $00
+
+
+
