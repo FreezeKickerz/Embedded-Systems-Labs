@@ -1,4 +1,4 @@
-# CMPEN 472: Microprocessors and Embedded Systems  
+# Embedded Systems Design  
 
 ## Overview  
 This repository contains my lab projects, design files, and documentation from **CMPEN 472: Microprocessors and Embedded Systems** at **Penn State University**.  
@@ -28,7 +28,7 @@ Throughout the course, I designed, built, and programmed embedded systems that i
 ---
 
 ## Major Project  
-This project involved the design and implementation of a **microprocessor-based embedded control system** that integrated multiple real-time components. The application utilized the **Raspberry Pi** platform with external peripherals and embedded sensors.  
+This project involved the design and implementation of a **microprocessor-based embedded control system** that integrated multiple real-time components. The application utilized both the **Raspberry Pi** and **Freescale/NXP HCS12(x)** microcontrollers programmed using **CodeWarrior IDE**.  
 
 ### Core Features  
 - **LED Dimming via PWM:** Controlled LED brightness using hardware timers and PWM registers.  
@@ -41,11 +41,13 @@ This project involved the design and implementation of a **microprocessor-based 
 ---
 
 ## Tools and Environment  
-- **Hardware Platforms:** Raspberry Pi, DC Motor Shields, Camera Modules  
+- **Hardware Platforms:** Raspberry Pi, Freescale/NXP HCS12(x) Microcontrollers, DC Motor Shields, Camera Modules  
 - **Programming Languages:** C, Assembly  
-- **Development Environment:** Linux, Makefiles, Bash scripting  
+- **Development Environments:**  
+  - **CodeWarrior IDE** for HCS12(x) microcontrollers  
+  - **Linux** for C development, scripting, and debugging  
 - **Interfaces and Protocols:** SPI, I2C, UART, RS232, PWM  
-- **Additional Tools:** HyperTerminal, Multisim, and PCB fabrication tools  
+- **Additional Tools:** HyperTerminal, Multisim, PCB fabrication tools  
 
 ---
 
@@ -67,9 +69,18 @@ Key learning outcomes include:
 - Designing and programming real-time embedded control systems from scratch.  
 - Implementing **PWM control**, **motor actuation**, and **sensor data acquisition**.  
 - Writing and debugging **C and assembly code** for hardware-level communication.  
+- Using **CodeWarrior** to develop and test firmware on the **HCS12(x)** microcontroller platform.  
 - Interfacing with external components using **SPI**, **I2C**, and **UART** protocols.  
-- Managing embedded development workflows with Linux tools and hardware simulators.  
 - Applying embedded systems concepts to build autonomous and IoT-enabled devices.  
+
+---
+
+## References and Materials  
+- *Embedded Systems Design* Course Notes  
+- CodeWarrior IDE Documentation for HCS12(x) Microcontrollers  
+- Raspberry Pi and NXP Hardware Manuals  
+- Microcontroller Datasheets and Peripheral Specifications  
+- Linux Development Tools and System Calls  
 
 ---
 
